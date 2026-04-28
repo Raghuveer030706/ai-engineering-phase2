@@ -1,0 +1,39 @@
+# API keys — never commit
+.env
+*.env
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# Data & databases
+*.db
+*.sqlite
+chroma_db/
+memory.db
+
+# Traces (generated at runtime, not source)
+traces/
+*.log
+logs/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# VS Code
+.vscode/
+
+# Large model files
+models/
+*.bin
+*.safetensors
