@@ -148,21 +148,81 @@ Get-Content traces\trace.jsonl -Tail 1 | python -m json.tool
 # Count total spans written
 (Get-Content traces\trace.jsonl).Count
 ```
-
----
-
-## Git commit
-```powershell
-cd C:\Raghu\ai-engineering-phase2
-git add .
-git commit -m "Day 1: OpenTelemetry tracing — real cost_usd, trace_id on every LLM call"
-git push -u origin main
-```
-
----
-
 ## What you proved today
 1. `cost_usd` is real — from `response.usage`, never estimated or zero
 2. Every LLM call has a `trace_id` — logs and traces now correlate
 3. Span hierarchy shows the agent's full decision tree
 4. You can answer: "which step was slowest?" and "what did this run cost?"
+
+# Day 2 — Cost & Latency Dashboard
+
+## What you'll build
+A terminal dashboard that reads `traces/trace.jsonl` from Day 1
+and renders live cost totals, latency histograms, per-trace breakdowns,
+and a cumulative cost trend — all without making a single new API call.
+
+## Why no new API calls?
+The data is already there. Day 1 captured everything.
+This is the point of structured traces — you can answer new questions
+about your system without re-running it.
+
+## Files
+```
+day2-cost-dashboard/
+├── metrics.py              ← data layer: parse trace.jsonl into structs
+├── dashboard.py            ← render panels (snapshot + live mode)
+├── agent_with_metrics.py   ← run 3 more questions, then show dashboard
+└── requirements.txt        ← only plotext is new
+```
+
+## What the dashboard shows
+- **KPI bar** — total cost, avg cost/trace, 30-day projection at 100 q/day
+- **Cost by model** — bar chart with percentage share
+- **Latency histogram** — distribution of LLM call durations
+- **Per-trace table** — cost, latency, steps, token counts, question preview
+- **Top 5 slowest spans** — where time is actually going
+- **Cumulative cost trend** — cost accumulation over your session
+
+## Setup
+
+### Install the one new package
+pip install plotext==5.2.8 --break-system-packages
+
+## Run it — in order
+
+### Step 1: Verify metrics layer reads Day 1 traces correctly
+```powershell
+python metrics.py
+```
+**Expected:** prints total cost, traces, LLM calls, latency distribution.
+Should match your Day 1 `inspect_traces.py --cost` output.
+
+### Step 2: Snapshot dashboard (one-shot render)
+```powershell
+python dashboard.py
+```
+**Expected:** full dashboard rendered in terminal. All panels visible.
+
+### Step 3: Add more trace data + show dashboard
+```powershell
+python agent_with_metrics.py
+```
+**Expected:** 3 new agent runs, then full dashboard with 7+ traces.
+The latency histogram and cost trend will now have meaningful shapes.
+
+### Step 4: Live mode (open in a second PowerShell pane)
+```powershell
+# Pane 1 — live dashboard
+python dashboard.py --live 3
+
+# Pane 2 — run more agent questions (reuse Day 1 agent)
+cd ..\day1-otel-tracing
+python agent.py
+```
+Watch the dashboard update as new traces arrive.
+
+## What you proved today
+1. Structured traces are queryable — no re-running needed to get new metrics
+2. Cost projection: avg cost/trace × queries/day × 30 days = real budget number
+3. Latency histogram shows where time goes (almost always the LLM call, not tools)
+4. Live mode: dashboard + agent in split panes = production monitoring feel
