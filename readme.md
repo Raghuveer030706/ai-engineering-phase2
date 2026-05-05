@@ -292,3 +292,112 @@ Specialist pattern (3)     ~8400ms   ~2900ms   ~5500ms saved
 3. The supervisor → specialists pattern is the real production use case
 4. Steps within a single question cannot be parallelised (data dependency)
 5. Shared AsyncReActAgent instance is safe — no mutable state between runs
+
+# Day 5 — Streaming Responses
+
+## What you'll build
+A streaming LLM client and agent where tokens appear in the terminal
+as they are generated. First token arrives in under 500ms.
+Plus a FastAPI endpoint that streams tokens over HTTP using Server-Sent Events.
+
+## The new metric: Time To First Token (TTFT)
+
+Non-streaming: user waits 2 seconds, sees nothing, then gets everything at once.
+Streaming:     user sees first token in ~300ms, reads as the rest arrives.
+
+Same total latency. Completely different user experience.
+
+```
+Non-streaming: [=====2000ms of silence=====] DUMP
+Streaming:     [~300ms] token token token token token token ...
+```
+
+TTFT is the metric that determines whether an AI product feels responsive.
+
+## Files
+```
+day5-streaming/
+├── streaming_client.py   ← async streaming wrapper, TTFT measurement
+├── streaming_agent.py    ← streaming ReAct agent + FastAPI /ask/stream
+└── requirements.txt      ← fastapi + uvicorn if not already installed
+```
+
+## Setup
+
+FastAPI and uvicorn may already be in your env from Phase 1. Check:
+```powershell
+pip show fastapi uvicorn
+```
+
+If not installed:
+```powershell
+pip install fastapi uvicorn --break-system-packages
+```
+
+## Run it — in order
+
+### Step 1: Streaming client demo
+```powershell
+conda activate ai-journey
+cd <your-repo>\phase-A-observability\day5-streaming
+python streaming_client.py
+```
+Watch tokens appear character by character in the terminal.
+Note the TTFT printed at the end — should be under 500ms.
+
+### Step 2: Streaming agent demo
+```powershell
+python streaming_agent.py
+```
+Each ReAct step streams its output live.
+Summary table at the end shows avg TTFT vs total latency.
+
+### Step 3: FastAPI streaming server
+```powershell
+python streaming_agent.py --serve
+```
+Server starts at http://localhost:8001
+
+Test the streaming endpoint (new PowerShell window):
+```powershell
+$body = '{"question": "What is 12 * 8?"}'
+Invoke-WebRequest -Uri http://localhost:8001/ask/stream `
+  -Method POST `
+  -ContentType "application/json" `
+  -Body $body | Select-Object -ExpandProperty Content
+```
+
+Or open http://localhost:8001/docs in browser → try /ask/stream interactively.
+
+## What to observe
+
+**TTFT vs total latency ratio:**
+A healthy streaming endpoint has TTFT < 20% of total latency.
+If TTFT is 400ms and total is 2000ms, ratio is 20% — good.
+If TTFT is 1800ms and total is 2000ms, something is buffering your stream.
+
+**Server-Sent Events format:**
+Each token arrives as:
+```
+data: {"type": "token", "text": "Hello"}
+
+data: {"type": "token", "text": " world"}
+
+data: {"type": "done", "total_tokens": 42}
+```
+This is the same format used by OpenAI, Anthropic's public API, and Gemini.
+
+## Phase A Complete
+
+| Day | Built | Key metric |
+|-----|-------|-----------|
+| 1 | OTel tracing | trace_id on every LLM call |
+| 2 | Cost dashboard | $0.004598 across 6 traces |
+| 3 | Async agent | sequential async baseline: 5606ms |
+| 4 | Parallel agents | asyncio.gather() → 2942ms (1.47×) |
+| 5 | Streaming | TTFT < 500ms |
+
+## What comes next — Phase B
+Retrieval mastery. Fixing context recall from 0.583.
+Contextual retrieval, parent-document retrieval, late chunking,
+and an A/B harness to compare strategies automatically.
