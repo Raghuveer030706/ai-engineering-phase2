@@ -25,57 +25,6 @@ day1-otel-tracing/
     └── trace.jsonl
 ```
 
-## Setup
-
-### 1 — Create the new repo on GitHub
-Go to github.com → New repository → name: `ai-engineering-phase2`
-Leave it empty (no README, no .gitignore).
-
-### 2 — Set up local repo (PowerShell)
-```powershell
-# Create folder wherever you keep your projects
-mkdir C:\Raghu\ai-engineering-phase2
-cd C:\Raghu\ai-engineering-phase2
-
-git init
-git remote add origin https://github.com/Raghuveer030706/ai-engineering-phase2.git
-```
-
-### 3 — Copy files in
-Copy the downloaded files into:
-```
-C:\Raghu\ai-engineering-phase2\
-├── .gitignore
-├── README.md
-└── phase-A-observability\
-    └── day1-otel-tracing\
-        ├── tracer.py
-        ├── llm_client.py
-        ├── agent.py
-        ├── inspect_traces.py
-        ├── requirements.txt
-        └── README.md
-```
-
-### 4 — Create .env at repo root
-```
-C:\Raghu\ai-engineering-phase2\.env
-```
-Contents:
-```
-ANTHROPIC_API_KEY=sk-ant-your-key-here
-```
-
-### 5 — Install the only new packages
-```powershell
-conda activate ai-journey
-cd C:\Raghu\ai-engineering-phase2\phase-A-observability\day1-otel-tracing
-pip install opentelemetry-api==1.27.0 opentelemetry-sdk==1.27.0 --break-system-packages
-```
-Everything else (anthropic, rich, python-dotenv) is already in your env.
-
----
-
 ## Run it — in order
 
 ### Step 1: Verify tracer (no API key needed)
@@ -226,3 +175,55 @@ Watch the dashboard update as new traces arrive.
 2. Cost projection: avg cost/trace × queries/day × 30 days = real budget number
 3. Latency histogram shows where time goes (almost always the LLM call, not tools)
 4. Live mode: dashboard + agent in split panes = production monitoring feel
+
+# Day 3 — Async Agent Core
+
+## What you built
+The Day 1 ReAct agent rewritten with `asyncio`.
+Same behaviour. Same tools. Same traces. Same answers.
+Different architecture — now async/await native.
+
+## What changed vs Day 1
+
+| Thing | Day 1 | Day 3 |
+|-------|-------|-------|
+| Anthropic client | `anthropic.Anthropic` | `anthropic.AsyncAnthropic` |
+| `run()` | `def run()` | `async def run()` |
+| `_run_step()` | `def _run_step()` | `async def _run_step()` |
+| LLM call | `self.llm.ask(...)` | `await self.llm.ask(...)` |
+| Entry point | `agent.run(q)` | `asyncio.run(agent.run(q))` |
+| Tool calls | sync | sync (still — tools are CPU, not I/O) |
+| Tracing | identical | identical |
+| Wall-clock time | ~2.7s | ~2.7s (same — steps still sequential) |
+
+## What did NOT change
+- Tool implementations (calculator, word_counter, text_reverser)
+- System prompt
+- Parser logic
+- Span names and attributes
+- Cost tracking
+
+## Why same speed today
+Steps are still sequential:
+```
+await step1  →  await step2  →  await step3
+```
+The event loop CAN interleave work during each await,
+but we're not giving it anything else to run yet.
+
+Day 4 changes this to:
+```
+asyncio.gather(question1, question2, question3)  # all at once
+```
+## Key concepts proved today
+1. `async def` + `await` = pauseable functions, not blocking ones
+2. `asyncio.AsyncAnthropic` is the only client change needed
+3. Tools stay synchronous — async is for I/O waits, not CPU work
+4. Wall-clock time is identical to Day 1 — async alone doesn't speed things up
+5. `asyncio.run()` is the entry point for all async programs
+
+## Tomorrow — Day 4
+`asyncio.gather()` — run multiple agent questions simultaneously.
+The event loop will interleave the LLM waits across all questions.
+Expected speedup: 2-3x on a batch of independent questions.
+The benchmark numbers from today are the baseline to beat.
