@@ -227,3 +227,68 @@ asyncio.gather(question1, question2, question3)  # all at once
 The event loop will interleave the LLM waits across all questions.
 Expected speedup: 2-3x on a batch of independent questions.
 The benchmark numbers from today are the baseline to beat.
+
+# Day 4 — Parallel Sub-Tasks with asyncio.gather()
+
+## What you'll prove today
+Running 2 questions sequentially = 5606ms (Day 3 baseline).
+Running 2 questions in parallel  = ~2800ms (Day 4 target).
+Speedup: ~2×. The event loop interleaves LLM waits instead of stacking them.
+
+## The one new concept: asyncio.gather()
+
+```python
+# Sequential — total time = sum of all latencies
+result1 = await agent.run(q1)   # wait 2800ms
+result2 = await agent.run(q2)   # wait 2800ms
+# Total: 5600ms
+
+# Parallel — total time = max of all latencies
+results = await asyncio.gather(
+    agent.run(q1),   # both start immediately
+    agent.run(q2),   # event loop interleaves their waits
+)
+# Total: ~2800ms
+```
+
+## When parallel helps vs when it doesn't
+
+| Situation | Use parallel? | Why |
+|-----------|--------------|-----|
+| Multiple independent questions | ✓ Yes | No dependency between them |
+| Supervisor → multiple specialists | ✓ Yes | Each specialist is independent |
+| Fetch context from multiple sources | ✓ Yes | Pure I/O, no dependency |
+| Steps within one question | ✗ No | Step 2 needs step 1's observation |
+| Shared mutable state | ✗ No | Race conditions |
+
+## Files
+```
+day4-parallel-agents/
+├── parallel_agent.py   ← sequential vs parallel benchmark + specialist pattern
+└── requirements.txt    ← no new packages
+```
+
+## Setup
+No new packages needed.
+
+## Run it
+
+The script runs three rounds automatically:
+- Round 1: Sequential (fresh Day 3 baseline)
+- Round 2: Parallel with asyncio.gather()
+- Round 3: Supervisor + 3 specialists pattern
+
+**Expected output at the end:**
+
+```
+Wall-clock (2 questions)   5400ms    2800ms    -2600ms
+Speedup factor             1.00×     ~2.00×    +1.00×
+Specialist pattern (3)     ~8400ms   ~2900ms   ~5500ms saved
+```
+
+## What you proved today
+1. asyncio.gather() runs independent coroutines concurrently
+2. Speedup ≈ N× for N independent questions (bounded by slowest)
+3. The supervisor → specialists pattern is the real production use case
+4. Steps within a single question cannot be parallelised (data dependency)
+5. Shared AsyncReActAgent instance is safe — no mutable state between runs
