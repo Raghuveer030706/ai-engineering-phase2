@@ -567,3 +567,246 @@ CHROMA_PATH = Path("../day1-contextual-retrieval/chroma_db")
 - Always pass `llm=` and `embeddings=` explicitly — OpenAI is the default
 - `EvaluationResult` is not a dict — use `to_pandas().select_dtypes(include="number").mean()`
 - Add `raise_exceptions=False` to survive rate-limit blips mid-eval
+
+# Phase B — Retrieval Mastery
+
+**Goal:** Close the context recall gap from Phase 1 (0.583) and beat the overall RAGAS capstone score of 0.827.
+
+**Corpus:** Attention Is All You Need (Vaswani et al., 2017)  
+**Embeddings:** all-MiniLM-L6-v2 (local, no API cost)  
+**LLM:** claude-haiku-4-5-20251001  
+**Eval:** RAGAS 0.4.3, 6 fixed questions, same set every day
+
+---
+
+## Running Scoreboard
+
+| Day | Strategy | Faithfulness | Answer Rel. | Ctx Precision | Ctx Recall | Overall |
+|-----|----------|-------------|-------------|---------------|------------|---------|
+| Phase 1 capstone | Hybrid RAG | — | — | — | 0.583 | 0.827 |
+| B-D1 baseline | Raw chunks | 0.9208 | 0.9736 | 0.6972 | 1.0000 | 0.8979 |
+| B-D1 contextual | Claude context prepend | 0.9552 | 0.9755 | 0.8056 | 1.0000 | **0.9341** |
+| B-D2 parent-doc | Small search → large return | 0.9554 | 0.8025 | 0.6250 | 0.8333 | 0.8041 |
+| B-D3 late chunking | Full-doc token attention | 1.0000 ★ | 0.9659 ★ | 0.7389 | 1.0000 | 0.9262 |
+
+---
+
+## ChromaDB Collections
+
+All collections share one `chroma_db/` folder under `day1-contextual-retrieval/`:
+
+| Collection | Day | Purpose |
+|------------|-----|---------|
+| `baseline_attention` | D1 | Raw 400-token chunks, no context |
+| `contextual_attention` | D1 | Claude-summary prepended chunks |
+| `small_chunks_attention` | D2 | 128-token search index |
+| `parent_chunks_attention` | D2 | 512-token retrieval store (ID fetch only) |
+| `late_chunking_attention` | D3 | Jina token-span embeddings, full-doc context |
+
+---
+
+## Day 1 — Contextual Retrieval
+
+**Folder:** `day1-contextual-retrieval/`
+
+### The problem
+Isolated chunks lose referential context. A chunk saying *"it increased by 20%"* means nothing without knowing what *"it"* refers to. Cosine search finds the right location but the embedding carries no document-level signal.
+
+### The fix
+Before indexing, ask Claude to write 1–2 sentences describing where each chunk sits in the document. Prepend that summary inside `<context>` tags. The embedding now carries both local meaning and document position.
+
+```
+<context>
+This chunk is from Section 3.2 describing the encoder sublayer
+connection and layer normalization step.
+</context>
+
+...raw chunk text...
+```
+
+### Files
+
+| File | What it does |
+|------|-------------|
+| `setup_baseline.py` | Chunks PDF (400 tokens, 80 overlap), embeds with MiniLM, indexes into `baseline_attention` |
+| `contextual_retrieval.py` | Generates Claude context per chunk, prepends it, re-embeds, indexes into `contextual_attention` |
+| `eval.py` | RAGAS 0.4.3 on both collections, prints side-by-side comparison |
+
+### Run order
+
+```powershell
+conda activate ai-journey
+cd phase-B-retrieval\day1-contextual-retrieval
+
+python setup_baseline.py
+python contextual_retrieval.py
+python eval.py
+```
+
+### Results
+
+```
+Metric                  Baseline   Contextual      Delta
+────────────────────────────────────────────────────────
+faithfulness              0.9208       0.9552   ▲ 0.0344
+answer_relevancy          0.9736       0.9755   ▲ 0.0019
+context_precision         0.6972       0.8056   ▲ 0.1083
+context_recall            1.0000       1.0000   ─ 0.0000
+OVERALL (mean)            0.8979       0.9341   ▲ 0.0362
+```
+
+**Key win:** `context_precision` +0.1083. Claude-generated summaries make embeddings location-aware — retrieval returns more relevant chunks for the same query. Overall 0.9341 beats Phase 1 capstone (0.827) by +0.107.
+
+### Gotchas
+- `contextual_retrieval.py` makes one Claude call per chunk (~31 calls). `RATE_DELAY=0.3s` avoids bursts.
+- RAGAS hit 429 rate limit at 19/24 calls on the contextual eval run — recovered and finished. `raise_exceptions=False` added to Day 2+ evals.
+- `chroma_db/` lands inside `day1-contextual-retrieval/` — point all Day 2–5 scripts at this path explicitly.
+
+---
+
+## Day 2 — Parent-Document Retrieval
+
+**Folder:** `day2-parent-document/`
+
+### The idea
+Index small chunks (128 tokens) for precise embedding search. Each small chunk's metadata stores a `parent_id` pointing to its 512-token parent. When a small chunk matches, fetch and return the parent instead — tighter search, richer context.
+
+```
+Query → embed → search small_chunks → get parent_id → fetch parent → return to LLM
+```
+
+### Why it seemed promising
+Small chunks have tighter, more specific embeddings — better cosine match. But small chunks often cut off mid-sentence. Returning the parent gives the full surrounding passage.
+
+### Files
+
+| File | What it does |
+|------|-------------|
+| `parent_document_retrieval.py` | Builds `small_chunks_attention` (128-token, with embeddings) and `parent_chunks_attention` (512-token, ID-fetch only, no embeddings) |
+| `eval_day2.py` | RAGAS comparison: Day 1 contextual vs Day 2 parent-document, running scoreboard |
+
+### Run order
+
+```powershell
+conda activate ai-journey
+cd phase-B-retrieval\day2-parent-document
+
+python parent_document_retrieval.py
+python eval_day2.py
+```
+
+### Results
+
+```
+Metric                  Day1-Ctx     Day2-PDR        Delta
+──────────────────────────────────────────────────────────
+faithfulness              0.9539       0.9554   ▲ 0.0015
+answer_relevancy          0.9701       0.8025   ▼ 0.1676
+context_precision         0.8056       0.6250   ▼ 0.1806
+context_recall            1.0000       0.8333   ▼ 0.1667
+OVERALL (mean)            0.9324       0.8041   ▼ 0.1283
+```
+
+### Why it regressed
+
+512-token parents are too coarse for a dense 15-page paper. Each parent window crosses multiple concepts — noise goes up, precision drops. One question's answer also split across two parent boundaries, so the second half wasn't retrieved in top-5 (recall drop). Day 1 contextual at 400 tokens with Claude summaries was better calibrated for this corpus.
+
+**Faithfulness held (+0.0015)** — answers stayed grounded in whatever was retrieved, even when retrieval was noisy.
+
+### Gotchas
+- `ChromaDB InternalError: Nothing found on disk` — triggered when parent collection was indexed with embeddings. Fixed by calling `parent_col.add()` without embeddings. Collections used only for ID-based `get()` must not have embeddings.
+- `CHROMA_PATH` must point to `../day1-contextual-retrieval/chroma_db` — not a local `../chroma_db`.
+
+---
+
+## Day 3 — Late Chunking
+
+**Folder:** `day3-late-chunking/`
+
+### The idea
+Standard chunking splits text first, then embeds each chunk independently — cross-sentence context is lost at boundaries. Late chunking flips the order: embed the *full document* in one transformer forward pass, then slice the resulting token embeddings into chunks post-hoc. Every chunk's embedding carries the full document's context baked in.
+
+```
+Standard:  split text → embed each chunk independently   (context lost at boundaries)
+Late:      embed full doc → slice token embeddings        (context preserved everywhere)
+```
+
+### Model
+`jinaai/jina-embeddings-v2-base-en` — 8192 token context window vs 256 for MiniLM. Required for late chunking. First run downloads ~500MB (cached after).
+
+```powershell
+pip install transformers==4.40.0 --break-system-packages   # pin before running
+pip install einops --break-system-packages
+```
+
+### Files
+
+| File | What it does |
+|------|-------------|
+| `late_chunking.py` | Tokenizes full PDF, runs one Jina forward pass, mean-pools 256-token spans into embeddings, indexes into `late_chunking_attention` |
+| `eval_day3.py` | Three-way RAGAS comparison: D1 contextual vs D2 parent-doc vs D3 late chunking. Loads both MiniLM (D1/D2) and Jina (D3) — each collection queried with its own model |
+
+### Run order
+
+```powershell
+conda activate ai-journey
+cd phase-B-retrieval\day3-late-chunking
+
+python late_chunking.py
+python eval_day3.py
+```
+
+### Results
+
+```
+Metric                  D1-Ctx     D2-PDR    D3-Late
+─────────────────────────────────────────────────────
+faithfulness            0.9537     0.9375    1.0000 ★
+answer_relevancy        0.9647     0.8045    0.9659 ★
+context_precision       0.8056 ★   0.6250    0.7389
+context_recall          1.0000 ★   0.8333    1.0000 ★
+OVERALL (mean)          0.9310 ★   0.8001    0.9262
+```
+
+### Reading the results
+
+Late chunking wins on faithfulness (1.0) and answer relevancy — full-document token attention produces complete, clean chunk boundaries with no dangling references. Claude has unambiguous material to answer from.
+
+Day 1 contextual still leads on precision (0.8056 vs 0.7389) — Claude-generated summaries add an explicit semantic label that cosine search locks onto. Late chunking's context is implicit in the math; better grounding, but diffuse signal for retrieval.
+
+| Strategy | Strength | Weakness |
+|----------|----------|----------|
+| D1 Contextual | Precision via explicit LLM label | Costs Claude calls per chunk |
+| D2 Parent-doc | Full passage returned | Too wide — noise kills precision |
+| D3 Late chunking | Faithfulness=1.0, no LLM cost | Precision below D1 |
+
+Day 4 multi-vector stores both a summary embedding and a full-text embedding per chunk — combining D1's precision signal with D3's faithfulness.
+
+### Gotchas
+- `transformers.onnx` removed in newer transformers — pin `transformers==4.40.0` before loading Jina
+- Each collection must be queried with the model it was indexed with — MiniLM for D1/D2, Jina for D3
+- Jina processes document in segments if total tokens exceed 8000 — still far better than MiniLM's 256-token limit per chunk
+
+---
+
+## Setup Notes (apply to all days)
+
+```powershell
+# Always run from the day subfolder
+cd phase-B-retrieval\dayN-folder-name
+python script.py
+
+# PDF lives at repo root
+ai-engineering-phase2\data\attention-is-all-you-need.pdf
+
+# PDF path in each script
+PDF_PATH = Path("../../data/attention-is-all-you-need.pdf")
+
+# Shared chroma_db path in Day 2–5 scripts
+CHROMA_PATH = Path("../day1-contextual-retrieval/chroma_db")
+```
+
+**RAGAS 0.4.3 reminders:**
+- Always pass `llm=` and `embeddings=` explicitly — OpenAI is the default
+- `EvaluationResult` is not a dict — use `to_pandas().select_dtypes(include="number").mean()`
+- Add `raise_exceptions=False` to survive rate-limit blips mid-eval
