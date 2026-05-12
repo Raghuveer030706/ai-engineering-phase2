@@ -1132,3 +1132,27 @@ CHROMA_PATH = Path("../day1-contextual-retrieval/chroma_db")
 - Always pass `llm=` and `embeddings=` explicitly — OpenAI is the default
 - `EvaluationResult` is not a dict — use `to_pandas().select_dtypes(include="number").mean()`
 - Add `raise_exceptions=False` to survive rate-limit blips mid-eval
+
+## Day 5 — A/B Retrieval Harness
+
+**Folder:** `day5-ab-harness/`
+
+### The deliverable
+One script that runs any registered retrieval strategy against the
+fixed eval set and outputs a ranked table automatically.
+Default run costs zero API calls — loads cached scores from Days 1–4.
+
+### Usage
+python ab_eval.py                        # free, instant — ranked table
+python ab_eval.py --new my-strategy      # score only new strategies
+python ab_eval.py --rerun d1-contextual  # force re-score one strategy
+python ab_eval.py --rerun all            # full re-run (expensive)
+
+### Adding a new strategy
+1. Build a ChromaDB collection for it
+2. Write a retrieve_fn(question) -> list[str] closure
+3. Add it to build_strategy_registry()
+4. Run: python ab_eval.py --new your-strategy-key
+
+### Phase B Final Results
+Winner: d1-contextual (0.9341) — +0.1071 vs Phase 1 capstone (0.827)
